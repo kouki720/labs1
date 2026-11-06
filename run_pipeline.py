@@ -1,7 +1,10 @@
 import sys
 
+from pandera.errors import SchemaError
+
 from pipeline.extract import read_orders
 from pipeline.load import write_csv
+from pipeline.schemas import OrdersCleanSchema, RawOrdersSchema
 from pipeline.transform import clean_orders, revenue_by_country
 from pipeline.validate import DataQualityError, check_reject_rate, check_schema
 
@@ -16,6 +19,8 @@ def main(path):
 
     print("[2/5] Check schema")
     check_schema(raw)
+    RawOrdersSchema.validate(raw)
+    print("      Pandera: raw schema OK")
 
     print("[3/5] Clean")
     clean, rejected = clean_orders(raw)
@@ -26,6 +31,9 @@ def main(path):
 
     print("[4/5] Check quality")
     check_reject_rate(len(raw), len(rejected))
+
+    OrdersCleanSchema.validate(clean)
+    print("      Pandera: clean schema OK")
 
     print("[5/5] Transform and load")
     report = revenue_by_country(clean)
@@ -39,5 +47,9 @@ if __name__ == "__main__":
         main(sys.argv[1])
     except DataQualityError as error:
         print(f"\nPIPELINE STOPPED: {error}")
+        print("Nothing was published.")
+        sys.exit(1)
+    except SchemaError as error:
+        print(f"\nPIPELINE STOPPED (Pandera): {error}")
         print("Nothing was published.")
         sys.exit(1)

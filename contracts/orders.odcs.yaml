@@ -1,0 +1,108 @@
+apiVersion: v3.2.0
+kind: DataContract
+id: urn:datacontract:shop:orders-clean
+name: orders_clean
+version: 1.1.0
+status: active
+description:
+  purpose: "Commandes nettoyées et validées de la boutique. Contrat entre l'équipe data et les analystes."
+  usage: "Utilisé pour calculer le chiffre d'affaires par pays. Toute ligne non conforme est rejetée avant publication."
+  limitations: "Ne contient que les commandes ayant passé les 6 règles de qualité du TP1/TP2."
+
+# 1. CORRECTION TECHNIQUE : Le bloc servers pour DuckDB
+servers:
+  - server: duckdb
+    type: duckdb
+    database: ./warehouse.duckdb  # 'database' est le champ requis, pas 'path' [citation:5][citation:8]
+    schema: main                  # 'schema' est requis pour résoudre les tables [citation:1][citation:5]
+
+schema:
+  - name: orders_clean
+    physicalName: orders_clean
+    description: "Table des commandes propres, prête pour l'analyse."
+    
+    # 2. AJOUT POUR L'IA : Contexte pour les agents (Nouveauté v3.2.0) [citation:3][citation:7]
+    context:
+      instructions: "Cette table contient des données transactionnelles validées. Utilisez-la pour des agrégations par pays ou par produit."
+      constraints:
+        - constraint: "Ne pas utiliser cette table pour calculer des marges (les coûts ne sont pas inclus)."
+
+    properties:
+      - name: order_id
+        logicalType: integer
+        physicalType: integer
+        primaryKey: true
+        required: true
+        description: "Identifiant unique de la commande."
+        quality:
+          - type: library
+            metric: duplicateValues
+            mustBe: 0
+            dimension: uniqueness # 3. AJOUT DE DIMENSION [citation:2][citation:6]
+
+      - name: customer_id
+        logicalType: string
+        physicalType: varchar
+        required: true
+        description: "Identifiant du client. Obligatoire (règle 1)."
+        quality:
+          - type: library
+            metric: nullValues
+            mustBe: 0
+            dimension: completeness
+
+      - name: country
+        logicalType: string
+        physicalType: varchar
+        required: true
+        description: "Pays de livraison. Doit être l'un des 5 pays de la boutique (règle 6)."
+        # 4. UTILISATION DES ENUMS (Nouveauté v3.2.0) [citation:3][citation:10]
+        enum:
+          - value: France
+          - value: Germany
+          - value: Italy
+          - value: Morocco
+          - value: Tunisia
+        quality:
+          - type: library
+            metric: invalidValues
+            mustBe: 0
+            dimension: conformity
+
+      - name: quantity
+        logicalType: integer
+        physicalType: integer
+        required: true
+        description: "Quantité commandée. Doit être >= 1 (règle 3)."
+        # 5. AJOUT DE CONTRAINTES NATIVES (Plus robuste que le texte libre)
+        logicalTypeOptions:
+          minimum: 1
+        quality:
+          - type: library
+            metric: invalidValues
+            mustBe: 0
+            dimension: conformity # 'validity' n'existe pas, on utilise 'conformity' ou 'accuracy'
+            # Note: Utilisez 'conformity' (conformité aux règles)
+
+      - name: unit_price
+        logicalType: number
+        physicalType: decimal(10,2)
+        required: true
+        description: "Prix unitaire. Doit être entre 0.01 et 1000 (règle 4)."
+        logicalTypeOptions:
+          minimum: 0.01
+          maximum: 1000.0
+        quality:
+          - type: library
+            metric: invalidValues
+            mustBe: 0
+            dimension: conformity
+
+    quality: # Règle au niveau de la table
+      - type: sql
+        description: "Le chiffre d'affaires total de la table ne doit pas dépasser un seuil absurde."
+        query: |
+          SELECT count(*) FROM orders_clean
+          WHERE quantity * unit_price > 100000
+        mustBe: 0
+        dimension: accuracy
